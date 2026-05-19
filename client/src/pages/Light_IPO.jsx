@@ -854,6 +854,10 @@ function Clients({ clients, setClients, upis, setUpis }) {
       setClientError("Enter a valid PAN like ABCDE1234F.");
       return;
     }
+    if (clients.some((item) => item.pan === pan)) {
+      setClientError("A client with this PAN already exists.");
+      return;
+    }
 
     setClients((items) => [{ id: uid(), ...client, name: client.name.trim(), pan, balance: Number(client.balance || 0) }, ...items]);
     setClient({ name: "", pan: "", balance: "" });
