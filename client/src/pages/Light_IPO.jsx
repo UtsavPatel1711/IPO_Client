@@ -50,6 +50,7 @@ const retailAmount = (maxPrice, shareCount) => Number(maxPrice || 0) * Number(sh
 const shniAmount = (maxPrice, shareCount) => retailAmount(maxPrice, shareCount) * 14;
 const validatePAN = (pan) => /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(String(pan || "").trim().toUpperCase());
 const clientInitials = (name = "") => name.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "CL";
+const csvCell = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
 
 export default function LightIPO() {
   const [user, setUser] = useState(() => JSON.parse(localStorage.getItem("ipo_light_user") || "null"));
@@ -60,6 +61,7 @@ export default function LightIPO() {
   const [applications, setApplications] = useState(() => JSON.parse(localStorage.getItem("ipo_light_applications") || "[]"));
   const [ipoQuery, setIpoQuery] = useState("");
   const [clientQuery, setClientQuery] = useState("");
+  const [confirmDialog, setConfirmDialog] = useState(null);
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
@@ -104,7 +106,11 @@ export default function LightIPO() {
   }
 
   function deleteApplication(applicationId) {
-    setApplications((items) => items.filter((item) => item.id !== applicationId));
+    const application = applications.find((item) => item.id === applicationId);
+    const name = application ? `${application.clientName}'s ${application.ipoName} application` : "this application";
+    requestDeleteConfirmation(name, () => {
+      setApplications((items) => items.filter((item) => item.id !== applicationId));
+    });
   }
 
   function applyApplication(ipo, client, upi) {
@@ -146,13 +152,48 @@ export default function LightIPO() {
   }
 
   function deleteIpo(ipoId) {
-    setIpos((items) => items.filter((item) => item.id !== ipoId));
-    setApplications((items) => items.filter((item) => item.ipoId !== ipoId));
+    const ipo = ipos.find((item) => item.id === ipoId);
+    requestDeleteConfirmation(ipo?.name || "this IPO", () => {
+      setIpos((items) => items.filter((item) => item.id !== ipoId));
+      setApplications((items) => items.filter((item) => item.ipoId !== ipoId));
+    });
   }
 
   function deleteClient(clientId) {
-    setClients((items) => items.filter((item) => item.id !== clientId));
-    setApplications((items) => items.filter((item) => item.clientId !== clientId));
+    const client = clients.find((item) => item.id === clientId);
+    requestDeleteConfirmation(client?.name || "this client", () => {
+      setClients((items) => items.filter((item) => item.id !== clientId));
+      setApplications((items) => items.filter((item) => item.clientId !== clientId));
+    });
+  }
+
+  function deleteUpi(upi) {
+    requestDeleteConfirmation(upi, () => {
+      setUpis((items) => items.filter((item) => item !== upi));
+    });
+  }
+
+  function requestDeleteConfirmation(name, onConfirm) {
+    setConfirmDialog({ name, onConfirm });
+  }
+
+  function confirmDeleteAction() {
+    confirmDialog?.onConfirm?.();
+    setConfirmDialog(null);
+  }
+
+  function updateClient(updatedClient) {
+    const normalizedClient = {
+      ...updatedClient,
+      name: updatedClient.name.trim(),
+      pan: updatedClient.pan.trim().toUpperCase(),
+      balance: Number(updatedClient.balance || 0),
+    };
+
+    setClients((items) => items.map((item) => item.id === normalizedClient.id ? normalizedClient : item));
+    setApplications((items) =>
+      items.map((item) => item.clientId === normalizedClient.id ? { ...item, clientName: normalizedClient.name } : item)
+    );
   }
 
   function saveIpoRecord(ipoRecord) {
@@ -205,11 +246,19 @@ export default function LightIPO() {
             onApplyApplication={applyApplication}
             onDeleteApplication={deleteApplication}
             onDeleteClient={deleteClient}
+            onUpdateClient={updateClient}
             onToggleAllotment={toggleApplicationAllotment}
           />
         )}
-        {view === "clients" && <Clients clients={clients} setClients={setClients} upis={upis} setUpis={setUpis} />}
+        {view === "clients" && <Clients clients={clients} setClients={setClients} upis={upis} setUpis={setUpis} onDeleteUpi={deleteUpi} />}
         {view === "analytics" && <Analytics applications={applications} clients={clients} upis={upis} ipos={ipos} />}
+        {confirmDialog && (
+          <ConfirmDeleteModal
+            name={confirmDialog.name}
+            onCancel={() => setConfirmDialog(null)}
+            onConfirm={confirmDeleteAction}
+          />
+        )}
       </main>
     </div>
   );
@@ -456,16 +505,16 @@ function Dashboard({ ipos, clients, upis, applications, onDeleteApplication }) {
 
 function IpoDesk({ ipos, clients, upis, applications, query, onSaveIpo, onApplyApplication, onDeleteApplication, onDeleteIpo }) {
   const [selectedIpo, setSelectedIpo] = useState(null);
-  const [form, setForm] = useState({ name: "", minPrice: "", maxPrice: "", shareCount: "" });
+  const [form, setForm] = useState({ name: "", minPrice: "", maxPrice: "", shareCount: "", ipoType: "Mainboard" });
   const [editingIpoId, setEditingIpoId] = useState("");
   const [formError, setFormError] = useState("");
 
-  const filtered = ipos.filter((ipo) => `${ipo.name} ${ipo.priceBand} ${ipo.shareCount}`.toLowerCase().includes(query.toLowerCase()));
+  const filtered = ipos.filter((ipo) => `${ipo.name} ${ipo.priceBand} ${ipo.shareCount} ${ipo.ipoType || "Mainboard"}`.toLowerCase().includes(query.toLowerCase()));
   const previewRetail = retailAmount(form.maxPrice, form.shareCount);
   const previewShni = shniAmount(form.maxPrice, form.shareCount);
 
   function resetIpoForm() {
-    setForm({ name: "", minPrice: "", maxPrice: "", shareCount: "" });
+    setForm({ name: "", minPrice: "", maxPrice: "", shareCount: "", ipoType: "Mainboard" });
     setEditingIpoId("");
     setFormError("");
   }
@@ -477,6 +526,7 @@ function IpoDesk({ ipos, clients, upis, applications, query, onSaveIpo, onApplyA
       minPrice: String(ipo.minPrice || ""),
       maxPrice: String(ipo.maxPrice || ""),
       shareCount: String(ipo.shareCount || ipo.lotSize || ""),
+      ipoType: ipo.ipoType || "Mainboard",
     });
     setFormError("");
   }
@@ -503,6 +553,7 @@ function IpoDesk({ ipos, clients, upis, applications, query, onSaveIpo, onApplyA
       shareCount,
       priceBand: `${minPrice} - ${maxPrice}`,
       lotSize: shareCount,
+      ipoType: form.ipoType || "Mainboard",
       retailAmount: retailAmount(maxPrice, shareCount),
       shniAmount: shniAmount(maxPrice, shareCount),
       status: "Open",
@@ -546,6 +597,18 @@ function IpoDesk({ ipos, clients, upis, applications, query, onSaveIpo, onApplyA
           <div>
             <label>No. of shares</label>
             <input value={form.shareCount} onChange={(e) => setForm({ ...form, shareCount: e.target.value })} type="number" placeholder="119" />
+          </div>
+          <div>
+            <label>IPO type</label>
+            <WorkspaceSelect
+              value={form.ipoType}
+              placeholder="Select IPO type"
+              options={[
+                { value: "Mainboard", label: "Mainboard" },
+                { value: "SME", label: "SME" },
+              ]}
+              onChange={(ipoType) => setForm({ ...form, ipoType })}
+            />
           </div>
         </div>
         <div className="price-preview ipo-preview">
@@ -599,10 +662,10 @@ function IpoTable({ ipos, onShowApplied, onEdit, onDelete, emptyText }) {
         <span>Company</span><span>Price / shares</span><span>Retail</span>{hasActions && <span>Actions</span>}
       </div>
       {ipos.map((ipo) => (
-        <div className="table-row" key={ipo.id}>
+        <div className={`table-row ${String(ipo.ipoType).toLowerCase() === "sme" ? "sme-ipo-row" : ""}`} key={ipo.id}>
           <div className="table-main">
           <span><strong>{ipo.name}</strong><small>{ipo.sector} · {ipo.exchange}</small></span>
-          <span>Rs {ipo.priceBand}<small>{ipo.shareCount || ipo.lotSize} shares</small></span>
+          <span>Rs {ipo.priceBand}<small>{ipo.shareCount || ipo.lotSize} shares <em className={`ipo-type-badge ${String(ipo.ipoType).toLowerCase() === "sme" ? "sme" : ""}`}>{ipo.ipoType || "Mainboard"}</em></small></span>
           <span><em>Rs {Number(ipo.retailAmount || retailAmount(ipo.maxPrice, ipo.shareCount)).toLocaleString("en-IN")}</em><small>Max price</small></span>
             {hasActions && (
               <span className="ipo-actions">
@@ -631,22 +694,57 @@ function IpoTable({ ipos, onShowApplied, onEdit, onDelete, emptyText }) {
 }
 
 function AppliedClientsModal({ ipo, applications, onClose, onDeleteApplication }) {
+  const [appliedQuery, setAppliedQuery] = useState("");
   const appliedClients = applications.filter((item) => item.ipoId === ipo.id);
-  const appliedByUpi = appliedClients.reduce((groups, application) => {
+  const filteredAppliedClients = appliedClients.filter((application) =>
+    `${application.clientName} ${application.upi} ${application.isAllotted ? "allotted" : "not allotted"}`.toLowerCase().includes(appliedQuery.toLowerCase())
+  );
+  const appliedByUpi = filteredAppliedClients.reduce((groups, application) => {
     const key = application.upi || "No UPI";
     groups[key] = groups[key] ? [...groups[key], application] : [application];
     return groups;
   }, {});
 
+  function exportAppliedClients() {
+    const headers = ["No.", "IPO Name", "Client Name", "UPI ID", "Allotment Status", "Applied At"];
+    const rows = filteredAppliedClients.map((application, index) => [
+      index + 1,
+      application.ipoName || ipo.name,
+      application.clientName,
+      application.upi,
+      application.isAllotted ? "Allotted" : "Not allotted",
+      application.appliedAt ? new Date(application.appliedAt).toLocaleString("en-IN") : "",
+    ]);
+    const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+    const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${ipo.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-applied-clients.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(event) => event.stopPropagation()}>
+      <div className="modal applied-clients-modal" onClick={(event) => event.stopPropagation()}>
         <div className="panel-title">
           <h3>Applied clients - {ipo.name}</h3>
-          <button className="icon-button" onClick={onClose}>x</button>
+          <div className="modal-title-actions">
+            <button className="secondary-action export-action" onClick={exportAppliedClients} disabled={!filteredAppliedClients.length}>
+              Export Excel
+            </button>
+            <button className="icon-button" onClick={onClose}>x</button>
+          </div>
         </div>
-        <div className="applied-list only-list">
-          {appliedClients.length ? Object.entries(appliedByUpi).map(([upi, rows]) => (
+        <div className="applied-modal-search searchbox">
+          <Search size={18} />
+          <input value={appliedQuery} onChange={(event) => setAppliedQuery(event.target.value)} placeholder="Search client, UPI, or status" />
+        </div>
+        <div className="applied-list only-list applied-scroll-area">
+          {filteredAppliedClients.length ? Object.entries(appliedByUpi).map(([upi, rows]) => (
             <div className="upi-application-group" key={upi}>
               <div className="upi-group-title">
                 <strong>{upi}</strong>
@@ -669,17 +767,19 @@ function AppliedClientsModal({ ipo, applications, onClose, onDeleteApplication }
                 </div>
               ))}
             </div>
-          )) : <EmptyLine text="No client applied for this IPO yet." />}
+          )) : <EmptyLine text={appliedClients.length ? "No applied client matched your search." : "No client applied for this IPO yet."} />}
         </div>
       </div>
     </div>
   );
 }
 
-function ClientBook({ clients, ipos, upis, applications, clientQuery, onApplyApplication, onDeleteApplication, onDeleteClient, onToggleAllotment }) {
+function ClientBook({ clients, ipos, upis, applications, clientQuery, onApplyApplication, onDeleteApplication, onDeleteClient, onUpdateClient, onToggleAllotment }) {
   const [selectedClientId, setSelectedClientId] = useState("");
   const [selectedIpoId, setSelectedIpoId] = useState("");
   const [selectedUpi, setSelectedUpi] = useState("");
+  const [editingClient, setEditingClient] = useState(null);
+  const [editClientError, setEditClientError] = useState("");
   const [message, setMessage] = useState("");
 
   const filteredClients = clients.filter((client) =>
@@ -708,6 +808,31 @@ function ClientBook({ clients, ipos, upis, applications, clientQuery, onApplyApp
 
     const applied = onApplyApplication(selectedIpo, selectedClient, selectedUpi);
     setMessage(applied ? "IPO application added for this client." : "This client is already applied for selected IPO.");
+  }
+
+  function openEditClient(client) {
+    setEditingClient({ ...client, balance: String(client.balance || "") });
+    setEditClientError("");
+  }
+
+  function saveEditedClient() {
+    const pan = editingClient.pan.trim().toUpperCase();
+    if (!editingClient.name.trim() || !pan) {
+      setEditClientError("Client name and PAN are required.");
+      return;
+    }
+    if (!validatePAN(pan)) {
+      setEditClientError("Enter a valid PAN like ABCDE1234F.");
+      return;
+    }
+    if (clients.some((item) => item.id !== editingClient.id && item.pan === pan)) {
+      setEditClientError("A client with this PAN already exists.");
+      return;
+    }
+
+    onUpdateClient({ ...editingClient, pan });
+    setEditingClient(null);
+    setEditClientError("");
   }
 
   return (
@@ -744,6 +869,16 @@ function ClientBook({ clients, ipos, upis, applications, clientQuery, onApplyApp
               >
                 <Trash2 size={15} />
               </button>
+              <button
+                className="client-card-edit"
+                aria-label={`Edit ${client.name}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openEditClient(client);
+                }}
+              >
+                <Pencil size={15} />
+              </button>
             </button>
               );
             })()
@@ -765,17 +900,21 @@ function ClientBook({ clients, ipos, upis, applications, clientQuery, onApplyApp
         <div className="client-apply-grid">
           <div>
             <label>IPO name</label>
-            <select value={selectedIpoId} onChange={(event) => setSelectedIpoId(event.target.value)}>
-              <option value="">Select IPO</option>
-              {ipos.map((ipo) => <option key={ipo.id} value={ipo.id}>{ipo.name}</option>)}
-            </select>
+            <WorkspaceSelect
+              value={selectedIpoId}
+              placeholder="Select IPO"
+              options={ipos.map((ipo) => ({ value: ipo.id, label: ipo.name }))}
+              onChange={setSelectedIpoId}
+            />
           </div>
           <div>
             <label>UPI ID</label>
-            <select value={selectedUpi} onChange={(event) => setSelectedUpi(event.target.value)}>
-              <option value="">Select UPI</option>
-              {upis.map((upi) => <option key={upi} value={upi}>{upi}</option>)}
-            </select>
+            <WorkspaceSelect
+              value={selectedUpi}
+              placeholder="Select UPI"
+              options={upis.map((upi) => ({ value: upi, label: upi }))}
+              onChange={setSelectedUpi}
+            />
           </div>
         </div>
 
@@ -835,11 +974,43 @@ function ClientBook({ clients, ipos, upis, applications, clientQuery, onApplyApp
         </div>
       </div>
       )}
+      {editingClient && (
+        <div className="modal-backdrop" onClick={() => setEditingClient(null)}>
+          <div className="modal edit-client-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="panel-title">
+              <div>
+                <h3>Edit client</h3>
+                <span>Update client details used across this workspace.</span>
+              </div>
+              <button className="icon-button" onClick={() => setEditingClient(null)}>x</button>
+            </div>
+            <div className="edit-client-form">
+              <div>
+                <label>Name</label>
+                <input value={editingClient.name} onChange={(event) => setEditingClient({ ...editingClient, name: event.target.value })} />
+              </div>
+              <div>
+                <label>PAN</label>
+                <input value={editingClient.pan} onChange={(event) => setEditingClient({ ...editingClient, pan: event.target.value.toUpperCase() })} maxLength={10} />
+              </div>
+              <div>
+                <label>Balance</label>
+                <input value={editingClient.balance} onChange={(event) => setEditingClient({ ...editingClient, balance: event.target.value })} type="number" />
+              </div>
+            </div>
+            {editClientError && <div className="inline-message">{editClientError}</div>}
+            <div className="modal-actions">
+              <button className="secondary-action" onClick={() => setEditingClient(null)}>Cancel</button>
+              <button className="primary-action compact" onClick={saveEditedClient}><Pencil size={18} /> Save changes</button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
 
-function Clients({ clients, setClients, upis, setUpis }) {
+function Clients({ clients, setClients, upis, setUpis, onDeleteUpi }) {
   const [client, setClient] = useState({ name: "", pan: "", balance: "" });
   const [upi, setUpi] = useState("");
   const [clientError, setClientError] = useState("");
@@ -911,7 +1082,10 @@ function Clients({ clients, setClients, upis, setUpis }) {
             <div className="upi-list-row" key={item}>
               <WalletCards size={18} />
               <strong>{item}</strong>
-              <button aria-label={`Delete ${item}`} onClick={() => setUpis((items) => items.filter((x) => x !== item))}>
+              <button
+                aria-label={`Delete ${item}`}
+                onClick={() => onDeleteUpi(item)}
+              >
                 <Trash2 size={15} />
               </button>
             </div>
@@ -919,6 +1093,26 @@ function Clients({ clients, setClients, upis, setUpis }) {
         </div>
       </div>
     </section>
+  );
+}
+
+function ConfirmDeleteModal({ name, onCancel, onConfirm }) {
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal confirm-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="confirm-icon">
+          <Trash2 size={22} />
+        </div>
+        <h3>Delete confirmation</h3>
+        <p>Are you sure you want to delete <strong>{name}</strong>? </p>
+        <div className="modal-actions">
+          <button className="secondary-action" onClick={onCancel}>Cancel</button>
+          <button className="danger-action" onClick={onConfirm}>
+            <Trash2 size={17} /> Delete
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1013,6 +1207,39 @@ function IpoSelect({ ipos, value, selectedLabel, onChange }) {
               onClick={() => choose(option.id)}
             >
               {option.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WorkspaceSelect({ value, placeholder, options, onChange }) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((option) => option.value === value);
+
+  function choose(nextValue) {
+    onChange(nextValue);
+    setOpen(false);
+  }
+
+  return (
+    <div className="custom-select workspace-select">
+      <button className={`custom-select-trigger ${open ? "open" : ""}`} onClick={() => setOpen((current) => !current)}>
+        <span className={!selected ? "select-placeholder" : ""}>{selected?.label || placeholder}</span>
+        <ChevronDown size={16} />
+      </button>
+      {open && (
+        <div className="custom-select-menu workspace-select-menu">
+          <button className={!value ? "selected" : ""} onClick={() => choose("")}>{placeholder}</button>
+          {options.map((option) => (
+            <button
+              key={option.value}
+              className={value === option.value ? "selected" : ""}
+              onClick={() => choose(option.value)}
+            >
+              {option.label}
             </button>
           ))}
         </div>

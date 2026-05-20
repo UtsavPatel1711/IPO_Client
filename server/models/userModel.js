@@ -9,6 +9,7 @@ const ipoSchema = new mongoose.Schema(
     shareCount: Number,
     priceBand: String,
     lotSize: Number,
+    ipoType: { type: String, default: "Mainboard" },
     retailAmount: Number,
     shniAmount: Number,
     status: String,
