@@ -48,6 +48,25 @@ const applicationSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const holdingSchema = new mongoose.Schema(
+  {
+    id: String,
+    clientId: String,
+    clientName: String,
+    ipoSource: String,
+    ipoId: String,
+    ipoName: String,
+    isExistingIpo: Boolean,
+    amount: Number,
+    quantity: Number,
+    status: String,
+    note: String,
+    createdAt: String,
+    updatedAt: String,
+  },
+  { _id: false }
+);
+
 const userSchema = new mongoose.Schema(
   {
     fullName: { type: String, trim: true },
@@ -72,6 +91,7 @@ const userSchema = new mongoose.Schema(
       clients: { type: [clientSchema], default: [] },
       upis: { type: [String], default: [] },
       applications: { type: [applicationSchema], default: [] },
+      holdings: { type: [holdingSchema], default: [] },
     },
   },
   { timestamps: true, collection: process.env.MONGODB_COLLECTION || "IPO" }

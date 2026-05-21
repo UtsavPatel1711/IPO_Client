@@ -44,6 +44,7 @@ const emptyWorkspace = {
   clients: [],
   upis: [],
   applications: [],
+  holdings: [],
 };
 
 const retailAmount = (maxPrice, shareCount) => Number(maxPrice || 0) * Number(shareCount || 0);
@@ -51,6 +52,7 @@ const shniAmount = (maxPrice, shareCount) => retailAmount(maxPrice, shareCount) 
 const validatePAN = (pan) => /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(String(pan || "").trim().toUpperCase());
 const clientInitials = (name = "") => name.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "CL";
 const csvCell = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+const portfolioStatusLabel = (status = "Holding") => status === "Holding" ? "Active" : status;
 
 export default function LightIPO() {
   const [user, setUser] = useState(() => JSON.parse(localStorage.getItem("ipo_light_user") || "null"));
@@ -59,6 +61,7 @@ export default function LightIPO() {
   const [clients, setClients] = useState(() => JSON.parse(localStorage.getItem("ipo_light_clients") || "null") || sampleClients);
   const [upis, setUpis] = useState(() => JSON.parse(localStorage.getItem("ipo_light_upis") || "null") || defaultUpis);
   const [applications, setApplications] = useState(() => JSON.parse(localStorage.getItem("ipo_light_applications") || "[]"));
+  const [holdings, setHoldings] = useState(() => JSON.parse(localStorage.getItem("ipo_light_holdings") || "[]"));
   const [ipoQuery, setIpoQuery] = useState("");
   const [clientQuery, setClientQuery] = useState("");
   const [confirmDialog, setConfirmDialog] = useState(null);
@@ -69,10 +72,11 @@ export default function LightIPO() {
     localStorage.setItem("ipo_light_clients", JSON.stringify(clients));
     localStorage.setItem("ipo_light_upis", JSON.stringify(upis));
     localStorage.setItem("ipo_light_applications", JSON.stringify(applications));
+    localStorage.setItem("ipo_light_holdings", JSON.stringify(holdings));
     if (user?.email) {
-      saveWorkspace({ email: user.email, ipos, clients, upis, applications }).catch(() => {});
+      saveWorkspace({ email: user.email, ipos, clients, upis, applications, holdings }).catch(() => {});
     }
-  }, [applications, clients, ipos, upis, user?.email]);
+  }, [applications, clients, holdings, ipos, upis, user?.email]);
 
   async function handleAuth(authUser) {
     try {
@@ -81,11 +85,13 @@ export default function LightIPO() {
       setClients(Array.isArray(workspace.clients) ? workspace.clients : emptyWorkspace.clients);
       setUpis(Array.isArray(workspace.upis) ? workspace.upis : emptyWorkspace.upis);
       setApplications(Array.isArray(workspace.applications) ? workspace.applications : emptyWorkspace.applications);
+      setHoldings(Array.isArray(workspace.holdings) ? workspace.holdings : emptyWorkspace.holdings);
     } catch {
       setIpos(emptyWorkspace.ipos);
       setClients(emptyWorkspace.clients);
       setUpis(emptyWorkspace.upis);
       setApplications(emptyWorkspace.applications);
+      setHoldings(emptyWorkspace.holdings);
       setNotice("Signed in. MongoDB sync will start once backend env values are configured.");
     }
     setUser(authUser);
@@ -98,10 +104,12 @@ export default function LightIPO() {
     localStorage.removeItem("ipo_light_clients");
     localStorage.removeItem("ipo_light_upis");
     localStorage.removeItem("ipo_light_applications");
+    localStorage.removeItem("ipo_light_holdings");
     setIpos(emptyWorkspace.ipos);
     setClients(emptyWorkspace.clients);
     setUpis(emptyWorkspace.upis);
     setApplications(emptyWorkspace.applications);
+    setHoldings(emptyWorkspace.holdings);
     setUser(null);
   }
 
@@ -156,6 +164,7 @@ export default function LightIPO() {
     requestDeleteConfirmation(ipo?.name || "this IPO", () => {
       setIpos((items) => items.filter((item) => item.id !== ipoId));
       setApplications((items) => items.filter((item) => item.ipoId !== ipoId));
+      setHoldings((items) => items.filter((item) => item.ipoId !== ipoId));
     });
   }
 
@@ -164,6 +173,7 @@ export default function LightIPO() {
     requestDeleteConfirmation(client?.name || "this client", () => {
       setClients((items) => items.filter((item) => item.id !== clientId));
       setApplications((items) => items.filter((item) => item.clientId !== clientId));
+      setHoldings((items) => items.filter((item) => item.clientId !== clientId));
     });
   }
 
@@ -194,6 +204,9 @@ export default function LightIPO() {
     setApplications((items) =>
       items.map((item) => item.clientId === normalizedClient.id ? { ...item, clientName: normalizedClient.name } : item)
     );
+    setHoldings((items) =>
+      items.map((item) => item.clientId === normalizedClient.id ? { ...item, clientName: normalizedClient.name } : item)
+    );
   }
 
   function saveIpoRecord(ipoRecord) {
@@ -204,6 +217,23 @@ export default function LightIPO() {
     setApplications((items) =>
       items.map((item) => item.ipoId === ipoRecord.id ? { ...item, ipoName: ipoRecord.name } : item)
     );
+    setHoldings((items) =>
+      items.map((item) => item.ipoId === ipoRecord.id ? { ...item, ipoName: ipoRecord.name } : item)
+    );
+  }
+
+  function saveHoldingRecord(holdingRecord) {
+    setHoldings((items) => {
+      const exists = items.some((item) => item.id === holdingRecord.id);
+      return exists ? items.map((item) => item.id === holdingRecord.id ? holdingRecord : item) : [holdingRecord, ...items];
+    });
+  }
+
+  function deleteHolding(holdingId) {
+    const holding = holdings.find((item) => item.id === holdingId);
+    requestDeleteConfirmation(holding ? `${holding.clientName}'s ${holding.ipoName} portfolio record` : "this portfolio record", () => {
+      setHoldings((items) => items.filter((item) => item.id !== holdingId));
+    });
   }
 
   if (!user) return <AuthScreen onAuth={handleAuth} />;
@@ -251,6 +281,15 @@ export default function LightIPO() {
           />
         )}
         {view === "clients" && <Clients clients={clients} setClients={setClients} upis={upis} setUpis={setUpis} onDeleteUpi={deleteUpi} />}
+        {view === "holdings" && (
+          <Holdings
+            clients={clients}
+            ipos={ipos}
+            holdings={holdings}
+            onSaveHolding={saveHoldingRecord}
+            onDeleteHolding={deleteHolding}
+          />
+        )}
         {view === "analytics" && <Analytics applications={applications} clients={clients} upis={upis} ipos={ipos} />}
         {confirmDialog && (
           <ConfirmDeleteModal
@@ -395,6 +434,7 @@ function Sidebar({ view, setView, user, logout }) {
     ["ipos", "IPO Desk", Landmark],
     ["clientBook", "Client Book", BookOpen],
     ["clients", "Clients & UPI", WalletCards],
+    ["holdings", "Portfolio", Building2],
     ["analytics", "Analytics", LineChart],
   ];
 
@@ -423,6 +463,7 @@ function Topbar({ view, ipoQuery, setIpoQuery, clientQuery, setClientQuery }) {
     ipos: "IPO Desk",
     clientBook: "Client Details",
     clients: "Clients & UPI",
+    holdings: "Portfolio",
     analytics: "Analytics",
   };
   const subtitles = {
@@ -430,6 +471,7 @@ function Topbar({ view, ipoQuery, setIpoQuery, clientQuery, setClientQuery }) {
     ipos: "Manual IPO workspace",
     clientBook: "Client book workspace",
     clients: "Client and payment setup",
+    holdings: "Client IPO portfolio",
     analytics: "Application insights",
   };
 
@@ -1090,6 +1132,217 @@ function Clients({ clients, setClients, upis, setUpis, onDeleteUpi }) {
               </button>
             </div>
           ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Holdings({ clients, ipos, holdings, onSaveHolding, onDeleteHolding }) {
+  const emptyForm = { clientId: "", ipoSource: "saved", ipoId: "", existingIpoName: "", amount: "", quantity: "", status: "Holding", note: "" };
+  const [form, setForm] = useState(emptyForm);
+  const [editingId, setEditingId] = useState("");
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState("");
+
+  const filteredHoldings = holdings.filter((holding) =>
+    `${holding.clientName} ${holding.ipoName} ${holding.status} ${holding.note}`.toLowerCase().includes(query.toLowerCase())
+  );
+  const totalAmount = holdings.reduce((sum, holding) => sum + Number(holding.amount || 0), 0);
+  const activeHoldings = holdings.filter((holding) => holding.status === "Holding").length;
+  const uniqueClients = new Set(holdings.map((holding) => holding.clientId)).size;
+  const selectedClient = clients.find((client) => client.id === form.clientId);
+  const selectedIpo = ipos.find((ipo) => ipo.id === form.ipoId);
+  const isExistingIpo = form.ipoSource === "existing";
+  const ipoName = isExistingIpo ? form.existingIpoName.trim() : selectedIpo?.name;
+
+  function resetForm() {
+    setForm(emptyForm);
+    setEditingId("");
+    setError("");
+  }
+
+  function saveHolding() {
+    if (!selectedClient || !ipoName || !form.amount) {
+      setError("Select client, IPO, and portfolio amount.");
+      return;
+    }
+
+    const amount = Number(form.amount);
+    const quantity = Number(form.quantity || 0);
+    if (amount <= 0) {
+      setError("Portfolio amount must be greater than zero.");
+      return;
+    }
+
+    onSaveHolding({
+      id: editingId || uid(),
+      clientId: selectedClient.id,
+      clientName: selectedClient.name,
+      ipoSource: form.ipoSource,
+      ipoId: isExistingIpo ? `existing-${ipoName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}` : selectedIpo.id,
+      ipoName,
+      isExistingIpo,
+      amount,
+      quantity,
+      status: form.status,
+      note: form.note.trim(),
+      updatedAt: new Date().toISOString(),
+      createdAt: editingId ? holdings.find((holding) => holding.id === editingId)?.createdAt : new Date().toISOString(),
+    });
+    resetForm();
+  }
+
+  function editHolding(holding) {
+    setEditingId(holding.id);
+    setForm({
+      clientId: holding.clientId,
+      ipoSource: holding.isExistingIpo ? "existing" : "saved",
+      ipoId: holding.isExistingIpo ? "" : holding.ipoId,
+      existingIpoName: holding.isExistingIpo ? holding.ipoName : "",
+      amount: String(holding.amount || ""),
+      quantity: String(holding.quantity || ""),
+      status: holding.status || "Holding",
+      note: holding.note || "",
+    });
+    setError("");
+  }
+
+  return (
+    <section className="holdings-page">
+      <div className="holdings-summary">
+        <Metric icon={WalletCards} label="Portfolio amount" value={`Rs ${totalAmount.toLocaleString("en-IN")}`} />
+        <Metric icon={Building2} label="Active portfolio" value={activeHoldings} />
+        <Metric icon={UserPlus} label="Portfolio clients" value={uniqueClients} />
+      </div>
+
+      <div className="panel holdings-form-card">
+        <div className="panel-title">
+          <div>
+            <h3>{editingId ? "Edit portfolio" : "Add portfolio"}</h3>
+            <span>Track client IPO portfolio amount, quantity, and status.</span>
+          </div>
+        </div>
+        <div className="portfolio-form-shell">
+          <div className="portfolio-main-stack">
+            <div className="portfolio-form-section client-picker">
+              <span className="form-section-kicker">Client</span>
+              <label>Client</label>
+              <WorkspaceSelect
+                value={form.clientId}
+                placeholder="Select client"
+                options={clients.map((client) => ({ value: client.id, label: `${client.name} (${client.pan})` }))}
+                onChange={(clientId) => setForm({ ...form, clientId })}
+              />
+            </div>
+
+            <div className="portfolio-form-section ipo-picker">
+              <span className="form-section-kicker">IPO</span>
+              <div className="portfolio-source-tabs" role="tablist" aria-label="IPO source">
+                <button
+                  className={form.ipoSource === "saved" ? "active" : ""}
+                  onClick={() => setForm({ ...form, ipoSource: "saved", ipoId: "", existingIpoName: "" })}
+                  type="button"
+                >
+                  Saved IPO
+                </button>
+                <button
+                  className={form.ipoSource === "existing" ? "active" : ""}
+                  onClick={() => setForm({ ...form, ipoSource: "existing", ipoId: "", existingIpoName: "" })}
+                  type="button"
+                >
+                  Existing IPO
+                </button>
+              </div>
+              <label>{isExistingIpo ? "Existing IPO name" : "IPO name"}</label>
+              {isExistingIpo ? (
+                <input value={form.existingIpoName} onChange={(event) => setForm({ ...form, existingIpoName: event.target.value })} placeholder="Enter IPO name" />
+              ) : (
+                <div className="portfolio-ipo-select">
+                  <WorkspaceSelect
+                    value={form.ipoId}
+                    placeholder="Select IPO"
+                    options={ipos.map((ipo) => ({ value: ipo.id, label: `${ipo.name} - ${ipo.ipoType || "Mainboard"}` }))}
+                    onChange={(ipoId) => setForm({ ...form, ipoId })}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="portfolio-form-section details-picker">
+            <span className="form-section-kicker">Details</span>
+            <div className="portfolio-detail-grid">
+              <div>
+                <label>Portfolio amount</label>
+                <input value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} type="number" placeholder="15000" />
+              </div>
+              <div>
+                <label>Quantity / shares</label>
+                <input value={form.quantity} onChange={(event) => setForm({ ...form, quantity: event.target.value })} type="number" placeholder="Optional" />
+              </div>
+              <div>
+                <label>Status</label>
+                <WorkspaceSelect
+                  value={form.status}
+                  placeholder="Select status"
+                  options={[
+                    { value: "Holding", label: "Active" },
+                    { value: "Released", label: "Released" },
+                    { value: "Watchlist", label: "Watchlist" },
+                  ]}
+                  onChange={(status) => setForm({ ...form, status: status || "Holding" })}
+                />
+              </div>
+              <div className="wide-input">
+                <label>Note</label>
+                <input value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} placeholder="Optional note" />
+              </div>
+            </div>
+            {error && <div className="inline-message portfolio-error">{error}</div>}
+            <div className="form-actions portfolio-actions">
+              <button className="primary-action compact" onClick={saveHolding}>
+                {editingId ? <Pencil size={18} /> : <Plus size={18} />}
+                {editingId ? "Update portfolio" : "Add portfolio"}
+              </button>
+              {editingId && <button className="secondary-action" onClick={resetForm}>Cancel</button>}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="panel holdings-list-card">
+        <div className="panel-title">
+          <div>
+            <h3>Portfolio records</h3>
+            <span>{filteredHoldings.length} records</span>
+          </div>
+          <div className="holdings-search searchbox">
+            <Search size={18} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search portfolio" />
+          </div>
+        </div>
+        <div className="holding-list">
+          {filteredHoldings.map((holding) => (
+            <div className={`holding-row ${String(holding.status || "Holding").toLowerCase()}`} key={holding.id}>
+              <div>
+                <strong>{holding.clientName}</strong>
+                <small>{holding.ipoName} {holding.isExistingIpo ? "- Existing IPO" : ""} - {holding.quantity ? `${holding.quantity} shares` : "Portfolio amount"}</small>
+              </div>
+              <span className="holding-amount">Rs {Number(holding.amount || 0).toLocaleString("en-IN")}</span>
+              <span className={`holding-status ${String(holding.status || "Holding").toLowerCase()}`}>{portfolioStatusLabel(holding.status)}</span>
+              <div className="holding-actions">
+                <button className="table-action icon-action" aria-label={`Edit ${holding.clientName} portfolio`} onClick={() => editHolding(holding)}>
+                  <Pencil size={15} />
+                </button>
+                <button className="row-delete" aria-label={`Delete ${holding.clientName} portfolio`} onClick={() => onDeleteHolding(holding.id)}>
+                  <Trash2 size={15} />
+                </button>
+              </div>
+              {holding.note && <p>{holding.note}</p>}
+            </div>
+          ))}
+          {!filteredHoldings.length && <EmptyLine text={holdings.length ? "No portfolio record matched your search." : "No portfolio records added yet."} />}
         </div>
       </div>
     </section>

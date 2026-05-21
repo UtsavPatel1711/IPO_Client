@@ -14,6 +14,7 @@ export async function saveWorkspace(req, res) {
       clients: Array.isArray(req.body.clients) ? req.body.clients : [],
       upis: Array.isArray(req.body.upis) ? req.body.upis : [],
       applications: Array.isArray(req.body.applications) ? req.body.applications : [],
+      holdings: Array.isArray(req.body.holdings) ? req.body.holdings : [],
     };
 
     const user = await User.findOneAndUpdate(
@@ -41,7 +42,7 @@ export async function loadWorkspace(req, res) {
       return res.status(404).json({ message: "Workspace not found" });
     }
 
-    res.json(user.workspace || { ipos: [], clients: [], upis: [], applications: [] });
+    res.json(user.workspace || { ipos: [], clients: [], upis: [], applications: [], holdings: [] });
   } catch (error) {
     res.status(500).json({ message: error.message || "Unable to load workspace" });
   }
