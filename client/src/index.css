@@ -507,6 +507,35 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px va
   display: grid;
   gap: 10px;
 }
+.portfolio-record-sections {
+  display: grid;
+  gap: 16px;
+}
+.portfolio-record-group {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fbf9;
+}
+.portfolio-record-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.portfolio-record-title h4 {
+  margin: 0;
+  font-size: 15px;
+}
+.portfolio-record-title span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
 .holding-row {
   display: grid;
   grid-template-columns: minmax(220px, 1.4fr) minmax(130px, .7fr) 110px 78px;
