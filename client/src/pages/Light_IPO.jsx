@@ -53,6 +53,9 @@ const validatePAN = (pan) => /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(String(pan || "")
 const clientInitials = (name = "") => name.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "CL";
 const csvCell = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
 const portfolioStatusLabel = (status = "Holding") => status === "Holding" ? "Active" : status;
+const dateInputValue = () => new Date().toISOString().slice(0, 10);
+const holdingKey = (clientId, assetId, assetName, assetType = "ipo") =>
+  `${clientId}|${assetType}|${assetId || String(assetName || "").trim().toLowerCase()}`;
 
 export default function LightIPO() {
   const [user, setUser] = useState(() => JSON.parse(localStorage.getItem("ipo_light_user") || "null"));
@@ -1139,22 +1142,28 @@ function Clients({ clients, setClients, upis, setUpis, onDeleteUpi }) {
 }
 
 function Holdings({ clients, ipos, holdings, onSaveHolding, onDeleteHolding }) {
-  const emptyForm = { clientId: "", ipoSource: "saved", ipoId: "", existingIpoName: "", amount: "", quantity: "", status: "Holding", note: "" };
+  const emptyForm = { clientId: "", assetType: "share", ipoSource: "saved", ipoId: "", existingIpoName: "", shareName: "", amount: "", quantity: "", buyPrice: "", buyDate: dateInputValue(), status: "Holding", note: "" };
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState("");
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
 
   const filteredHoldings = holdings.filter((holding) =>
-    `${holding.clientName} ${holding.ipoName} ${holding.status} ${holding.note}`.toLowerCase().includes(query.toLowerCase())
+    `${holding.clientName} ${holding.assetName || ""} ${holding.shareName || ""} ${holding.ipoName} ${holding.status} ${holding.note}`.toLowerCase().includes(query.toLowerCase())
   );
   const totalAmount = holdings.reduce((sum, holding) => sum + Number(holding.amount || 0), 0);
+  const totalShares = holdings.reduce((sum, holding) => sum + Number(holding.quantity || 0), 0);
   const activeHoldings = holdings.filter((holding) => holding.status === "Holding").length;
   const uniqueClients = new Set(holdings.map((holding) => holding.clientId)).size;
   const selectedClient = clients.find((client) => client.id === form.clientId);
   const selectedIpo = ipos.find((ipo) => ipo.id === form.ipoId);
+  const isShare = form.assetType === "share";
   const isExistingIpo = form.ipoSource === "existing";
-  const ipoName = isExistingIpo ? form.existingIpoName.trim() : selectedIpo?.name;
+  const assetName = isShare ? form.shareName.trim() : (isExistingIpo ? form.existingIpoName.trim() : selectedIpo?.name);
+  const assetId = isShare
+    ? `share-${assetName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+    : (isExistingIpo ? `existing-${assetName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}` : selectedIpo?.id);
+  const calculatedInvestment = Number(form.quantity || 0) * Number(form.buyPrice || 0);
 
   function resetForm() {
     setForm(emptyForm);
@@ -1163,32 +1172,58 @@ function Holdings({ clients, ipos, holdings, onSaveHolding, onDeleteHolding }) {
   }
 
   function saveHolding() {
-    if (!selectedClient || !ipoName || !form.amount) {
-      setError("Select client, IPO, and portfolio amount.");
+    if (!selectedClient || !assetName) {
+      setError("Select client and enter which share or IPO was bought.");
       return;
     }
 
-    const amount = Number(form.amount);
     const quantity = Number(form.quantity || 0);
+    const buyPrice = Number(form.buyPrice || 0);
+    const amount = quantity > 0 && buyPrice > 0 ? quantity * buyPrice : Number(form.amount || 0);
     if (amount <= 0) {
       setError("Portfolio amount must be greater than zero.");
       return;
     }
 
-    onSaveHolding({
-      id: editingId || uid(),
-      clientId: selectedClient.id,
-      clientName: selectedClient.name,
-      ipoSource: form.ipoSource,
-      ipoId: isExistingIpo ? `existing-${ipoName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}` : selectedIpo.id,
-      ipoName,
-      isExistingIpo,
+    const existingHolding = !editingId
+      ? holdings.find((holding) =>
+          holdingKey(holding.clientId, holding.assetId || holding.ipoId, holding.assetName || holding.ipoName, holding.assetType || "ipo") === holdingKey(selectedClient.id, assetId, assetName, form.assetType)
+        )
+      : null;
+    const previousAmount = Number(existingHolding?.amount || 0);
+    const previousQuantity = Number(existingHolding?.quantity || 0);
+    const totalHoldingAmount = editingId ? amount : previousAmount + amount;
+    const totalHoldingQuantity = editingId ? quantity : previousQuantity + quantity;
+    const purchase = {
+      id: uid(),
       amount,
       quantity,
+      buyPrice,
+      boughtAt: form.buyDate || dateInputValue(),
+      note: form.note.trim(),
+    };
+
+    onSaveHolding({
+      id: editingId || existingHolding?.id || uid(),
+      clientId: selectedClient.id,
+      clientName: selectedClient.name,
+      assetType: form.assetType,
+      assetId,
+      assetName,
+      ipoSource: form.ipoSource,
+      ipoId: isShare ? "" : assetId,
+      ipoName: assetName,
+      isExistingIpo: !isShare && isExistingIpo,
+      shareName: isShare ? assetName : "",
+      amount: totalHoldingAmount,
+      quantity: totalHoldingQuantity,
+      buyPrice: buyPrice || (totalHoldingQuantity > 0 ? totalHoldingAmount / totalHoldingQuantity : 0),
+      averagePrice: totalHoldingQuantity > 0 ? totalHoldingAmount / totalHoldingQuantity : buyPrice,
       status: form.status,
       note: form.note.trim(),
+      purchases: editingId ? holdings.find((holding) => holding.id === editingId)?.purchases || [] : [...(existingHolding?.purchases || []), purchase],
       updatedAt: new Date().toISOString(),
-      createdAt: editingId ? holdings.find((holding) => holding.id === editingId)?.createdAt : new Date().toISOString(),
+      createdAt: editingId ? holdings.find((holding) => holding.id === editingId)?.createdAt : existingHolding?.createdAt || new Date().toISOString(),
     });
     resetForm();
   }
@@ -1197,11 +1232,15 @@ function Holdings({ clients, ipos, holdings, onSaveHolding, onDeleteHolding }) {
     setEditingId(holding.id);
     setForm({
       clientId: holding.clientId,
+      assetType: holding.assetType || (holding.shareName ? "share" : "ipo"),
       ipoSource: holding.isExistingIpo ? "existing" : "saved",
       ipoId: holding.isExistingIpo ? "" : holding.ipoId,
       existingIpoName: holding.isExistingIpo ? holding.ipoName : "",
+      shareName: holding.assetType === "share" ? (holding.shareName || holding.assetName || holding.ipoName) : "",
       amount: String(holding.amount || ""),
       quantity: String(holding.quantity || ""),
+      buyPrice: String(holding.buyPrice || holding.averagePrice || ""),
+      buyDate: holding.purchases?.at?.(-1)?.boughtAt || dateInputValue(),
       status: holding.status || "Holding",
       note: holding.note || "",
     });
@@ -1214,13 +1253,14 @@ function Holdings({ clients, ipos, holdings, onSaveHolding, onDeleteHolding }) {
         <Metric icon={WalletCards} label="Portfolio amount" value={`Rs ${totalAmount.toLocaleString("en-IN")}`} />
         <Metric icon={Building2} label="Active portfolio" value={activeHoldings} />
         <Metric icon={UserPlus} label="Portfolio clients" value={uniqueClients} />
+        <Metric icon={BarChart3} label="Total shares" value={totalShares.toLocaleString("en-IN")} />
       </div>
 
       <div className="panel holdings-form-card">
         <div className="panel-title">
           <div>
             <h3>{editingId ? "Edit portfolio" : "Add portfolio"}</h3>
-            <span>Track client IPO portfolio amount, quantity, and status.</span>
+            <span>Select a client, add the share or IPO bought, and keep future buys in one portfolio.</span>
           </div>
         </div>
         <div className="portfolio-form-shell">
@@ -1237,49 +1277,89 @@ function Holdings({ clients, ipos, holdings, onSaveHolding, onDeleteHolding }) {
             </div>
 
             <div className="portfolio-form-section ipo-picker">
-              <span className="form-section-kicker">IPO</span>
-              <div className="portfolio-source-tabs" role="tablist" aria-label="IPO source">
+              <span className="form-section-kicker">Bought item</span>
+              <div className="portfolio-source-tabs asset-type-tabs" role="tablist" aria-label="Bought item type">
                 <button
-                  className={form.ipoSource === "saved" ? "active" : ""}
-                  onClick={() => setForm({ ...form, ipoSource: "saved", ipoId: "", existingIpoName: "" })}
+                  className={form.assetType === "share" ? "active" : ""}
+                  onClick={() => setForm({ ...form, assetType: "share", ipoId: "", existingIpoName: "" })}
                   type="button"
                 >
-                  Saved IPO
+                  Share
                 </button>
                 <button
-                  className={form.ipoSource === "existing" ? "active" : ""}
-                  onClick={() => setForm({ ...form, ipoSource: "existing", ipoId: "", existingIpoName: "" })}
+                  className={form.assetType === "ipo" ? "active" : ""}
+                  onClick={() => setForm({ ...form, assetType: "ipo", shareName: "" })}
                   type="button"
                 >
-                  Existing IPO
+                  IPO
                 </button>
               </div>
-              <label>{isExistingIpo ? "Existing IPO name" : "IPO name"}</label>
-              {isExistingIpo ? (
-                <input value={form.existingIpoName} onChange={(event) => setForm({ ...form, existingIpoName: event.target.value })} placeholder="Enter IPO name" />
+              {isShare ? (
+                <>
+                  <label>Share / company name</label>
+                  <input value={form.shareName} onChange={(event) => setForm({ ...form, shareName: event.target.value })} placeholder="Example: Reliance Industries" />
+                </>
               ) : (
-                <div className="portfolio-ipo-select">
-                  <WorkspaceSelect
-                    value={form.ipoId}
-                    placeholder="Select IPO"
-                    options={ipos.map((ipo) => ({ value: ipo.id, label: `${ipo.name} - ${ipo.ipoType || "Mainboard"}` }))}
-                    onChange={(ipoId) => setForm({ ...form, ipoId })}
-                  />
-                </div>
+                <>
+                  <div className="portfolio-source-tabs" role="tablist" aria-label="IPO source">
+                    <button
+                      className={form.ipoSource === "saved" ? "active" : ""}
+                      onClick={() => setForm({ ...form, ipoSource: "saved", ipoId: "", existingIpoName: "" })}
+                      type="button"
+                    >
+                      Saved IPO
+                    </button>
+                    <button
+                      className={form.ipoSource === "existing" ? "active" : ""}
+                      onClick={() => setForm({ ...form, ipoSource: "existing", ipoId: "", existingIpoName: "" })}
+                      type="button"
+                    >
+                      Existing IPO
+                    </button>
+                  </div>
+                  <label>{isExistingIpo ? "Existing IPO name" : "IPO name"}</label>
+                  {isExistingIpo ? (
+                    <input value={form.existingIpoName} onChange={(event) => setForm({ ...form, existingIpoName: event.target.value })} placeholder="Enter IPO name" />
+                  ) : (
+                    <div className="portfolio-ipo-select">
+                      <WorkspaceSelect
+                        value={form.ipoId}
+                        placeholder="Select IPO"
+                        options={ipos.map((ipo) => ({ value: ipo.id, label: `${ipo.name} - ${ipo.ipoType || "Mainboard"}` }))}
+                        onChange={(ipoId) => setForm({ ...form, ipoId })}
+                      />
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
 
           <div className="portfolio-form-section details-picker">
-            <span className="form-section-kicker">Details</span>
+            <span className="form-section-kicker">Buy details</span>
+            <div className="portfolio-live-card">
+              <div>
+                <small>Selected</small>
+                <strong>{selectedClient?.name || "No client"} - {assetName || "No share selected"}</strong>
+              </div>
+              <span>{form.assetType === "share" ? "Share" : "IPO"}</span>
+            </div>
             <div className="portfolio-detail-grid">
               <div>
-                <label>Portfolio amount</label>
-                <input value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} type="number" placeholder="15000" />
+                <label>Shares bought</label>
+                <input value={form.quantity} onChange={(event) => setForm({ ...form, quantity: event.target.value })} type="number" placeholder="70" />
               </div>
               <div>
-                <label>Quantity / shares</label>
-                <input value={form.quantity} onChange={(event) => setForm({ ...form, quantity: event.target.value })} type="number" placeholder="Optional" />
+                <label>Buy price</label>
+                <input value={form.buyPrice} onChange={(event) => setForm({ ...form, buyPrice: event.target.value })} type="number" placeholder="428" />
+              </div>
+              <div>
+                <label>Investment amount</label>
+                <input className="readonly-input" value={calculatedInvestment ? calculatedInvestment.toLocaleString("en-IN") : ""} readOnly placeholder="Auto calculated" />
+              </div>
+              <div>
+                <label>Buy date</label>
+                <input value={form.buyDate} onChange={(event) => setForm({ ...form, buyDate: event.target.value })} type="date" />
               </div>
               <div>
                 <label>Status</label>
@@ -1327,7 +1407,14 @@ function Holdings({ clients, ipos, holdings, onSaveHolding, onDeleteHolding }) {
             <div className={`holding-row ${String(holding.status || "Holding").toLowerCase()}`} key={holding.id}>
               <div>
                 <strong>{holding.clientName}</strong>
-                <small>{holding.ipoName} {holding.isExistingIpo ? "- Existing IPO" : ""} - {holding.quantity ? `${holding.quantity} shares` : "Portfolio amount"}</small>
+                <small>
+                  <b>{holding.assetType === "share" ? "Share" : "IPO"}</b> - {holding.assetName || holding.ipoName}
+                  {holding.isExistingIpo ? " - Existing IPO" : ""} - {holding.quantity ? `${holding.quantity} shares` : "Portfolio amount"}
+                </small>
+                <small>
+                  {Number(holding.averagePrice || holding.buyPrice || 0) > 0 ? `Avg Rs ${Number(holding.averagePrice || holding.buyPrice || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}` : "Avg price not set"}
+                  {Array.isArray(holding.purchases) && holding.purchases.length ? ` - ${holding.purchases.length} buy${holding.purchases.length > 1 ? "s" : ""}` : ""}
+                </small>
               </div>
               <span className="holding-amount">Rs {Number(holding.amount || 0).toLocaleString("en-IN")}</span>
               <span className={`holding-status ${String(holding.status || "Holding").toLowerCase()}`}>{portfolioStatusLabel(holding.status)}</span>
